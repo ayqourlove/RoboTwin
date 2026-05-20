@@ -35,10 +35,12 @@ parent_directory = os.path.dirname(current_file_path)
 
 class Base_Task(gym.Env):
 
+    # 空构造函数；实际环境初始化由 _init_task_env_ 完成。
     def __init__(self):
         pass
 
     # =========================================================== Init Task Env ===========================================================
+    # 初始化任务环境、随机化参数、场景、机器人、相机、物体和评测状态。
     def _init_task_env_(self, table_xy_bias=[0, 0], table_height_bias=0, **kwags):
         """
         Initialization TODO
@@ -158,6 +160,7 @@ class Base_Task(gym.Env):
 
         self.stage_success_tag = False
 
+    # 运行若干仿真步，检查场景物体是否已经稳定。
     def check_stable(self):
         actors_list, actors_pose_list = [], []
         for actor in self.scene.get_all_actors():
@@ -191,12 +194,15 @@ class Base_Task(gym.Env):
         check(500)
         return is_stable, unstable_list
 
+    # 子类需要实现：执行一次专家示教流程。
     def play_once(self):
         pass
 
+    # 子类需要实现：判断当前任务是否成功完成。
     def check_success(self):
         pass
 
+    # 创建 SAPIEN 引擎、物理场景、光照、地面和可选 viewer。
     def setup_scene(self, **kwargs):
         """
         Set the scene
@@ -268,6 +274,7 @@ class Base_Task(gym.Env):
                 y=kwargs.get("camera_rpy_y", 2.45),
             )
 
+    # 创建桌面和背景墙，并按配置随机化纹理和桌高。
     def create_table_and_wall(self, table_xy_bias=[0, 0], table_height=0.74):
         self.table_xy_bias = table_xy_bias
         wall_texture, table_texture = None, None
@@ -314,6 +321,7 @@ class Base_Task(gym.Env):
             texture_id=self.table_texture,
         )
 
+    # 在桌面上随机放置干扰物体，并记录其类别和编号。
     def get_cluttered_table(self, cluttered_numbers=10, xlim=[-0.59, 0.59], ylim=[-0.34, 0.34], zlim=[0.741]):
         self.record_cluttered_objects = []  # record cluttered objects
 
@@ -381,6 +389,7 @@ class Base_Task(gym.Env):
         self.size_dict = None
         self.cluttered_objs = []
 
+    # 加载或重置双臂机器人，并初始化规划器和关节参数。
     def load_robot(self, **kwags):
         """
         load aloha robot urdf file, set root pose and set joints
@@ -399,6 +408,7 @@ class Base_Task(gym.Env):
             link: sapien.physx.PhysxArticulationLinkComponent = link
             link.set_mass(1)
 
+    # 加载头部、腕部等相机，并同步一次渲染状态。
     def load_camera(self, **kwags):
         """
         Add cameras and set camera parameters
@@ -416,6 +426,7 @@ class Base_Task(gym.Env):
 
     # =========================================================== Sapien ===========================================================
 
+    # 更新灯光、腕部相机位姿和渲染缓存，保证图像数据最新。
     def _update_render(self):
         """
         Update rendering to refresh the camera's RGBD information
@@ -434,6 +445,7 @@ class Base_Task(gym.Env):
 
     # =========================================================== Basic APIs ===========================================================
 
+    # 按 data_type 配置采集当前观测，包括图像、深度、分割、点云、关节和末端位姿。
     def get_obs(self):
         self._update_render()
         self.cameras.update_picture()
@@ -499,12 +511,14 @@ class Base_Task(gym.Env):
         self.now_obs = deepcopy(pkl_dic)
         return pkl_dic
 
+    # 保存指定相机当前 RGB 图像。
     def save_camera_rgb(self, save_path, camera_name='head_camera'):
         self._update_render()
         self.cameras.update_picture()
         rgb = self.cameras.get_rgb()
         save_img(save_path, rgb[camera_name]['rgb'])
 
+    # 采集一帧观测并先保存为 pkl 缓存。
     def _take_picture(self):  # save data
         if not self.save_data:
             return
@@ -524,6 +538,7 @@ class Base_Task(gym.Env):
         save_pkl(self.folder_path["cache"] + f"{self.FRAME_IDX}.pkl", pkl_dic)  # use cache
         self.FRAME_IDX += 1
 
+    # 保存规划得到的左右臂关节轨迹，供后续重放录制使用。
     def save_traj_data(self, idx):
         file_path = os.path.join(self.save_dir, "_traj_data", f"episode{idx}.pkl")
         traj_data = {
@@ -532,6 +547,7 @@ class Base_Task(gym.Env):
         }
         save_pkl(file_path, traj_data)
 
+    # 读取已保存的轨迹数据。
     def load_tran_data(self, idx):
         assert self.save_dir is not None, "self.save_dir is None"
         file_path = os.path.join(self.save_dir, "_traj_data", f"episode{idx}.pkl")
@@ -539,6 +555,7 @@ class Base_Task(gym.Env):
             traj_data = pickle.load(f)
         return traj_data
 
+    # 将单帧 pkl 缓存合并成训练用 HDF5 和预览视频。
     def merge_pkl_to_hdf5_video(self):
         if not self.save_data:
             return
@@ -550,6 +567,7 @@ class Base_Task(gym.Env):
         os.makedirs(f"{self.save_dir}/data", exist_ok=True)
         process_folder_to_hdf5_video(cache_path, target_file_path, target_video_path)
 
+    # 删除当前 episode 的临时 pkl 缓存目录。
     def remove_data_cache(self):
         folder_path = self.folder_path["cache"]
         GREEN = "\033[92m"
@@ -561,20 +579,25 @@ class Base_Task(gym.Env):
         except OSError as e:
             print(f"{RED}Error: {folder_path} is not empty or does not exist.{RESET}")
 
+    # 设置当前 episode 的语言指令，主要用于评测或 VLA policy。
     def set_instruction(self, instruction=None):
         self.instruction = instruction
 
+    # 返回当前保存的语言指令。
     def get_instruction(self, instruction=None):
         return self.instruction
 
+    # 设置是否重新规划，以及重放模式下使用的左右臂轨迹列表。
     def set_path_lst(self, args):
         self.need_plan = args.get("need_plan", True)
         self.left_joint_path = args.get("left_joint_path", [])
         self.right_joint_path = args.get("right_joint_path", [])
 
+    # 保存评测视频 ffmpeg 进程句柄。
     def _set_eval_video_ffmpeg(self, ffmpeg):
         self.eval_video_ffmpeg = ffmpeg
 
+    # 关闭环境，并可选清理 SAPIEN 渲染缓存。
     def close_env(self, clear_cache=False):
         if clear_cache:
             # for actor in self.scene.get_all_actors():
@@ -582,12 +605,14 @@ class Base_Task(gym.Env):
             sapien_clear_cache()
         self.close()
 
+    # 关闭并释放评测视频写入进程。
     def _del_eval_video_ffmpeg(self):
         if self.eval_video_ffmpeg:
             self.eval_video_ffmpeg.stdin.close()
             self.eval_video_ffmpeg.wait()
             del self.eval_video_ffmpeg
 
+    # 保持当前夹爪开合状态并推进若干仿真步。
     def delay(self, delay_time, save_freq=None):
         render_freq = self.render_freq
         self.render_freq = 0
@@ -603,6 +628,7 @@ class Base_Task(gym.Env):
 
         self.render_freq = render_freq
 
+    # 为左、右或双侧夹爪生成从当前位置到目标开合度的控制序列。
     def set_gripper(self, set_tag="together", left_pos=None, right_pos=None):
         """
         Set gripper posture
@@ -646,6 +672,7 @@ class Base_Task(gym.Env):
 
         return left_result, right_result
 
+    # 根据物体或位姿的包围盒，在桌面上登记禁止放置干扰物的区域。
     def add_prohibit_area(
         self,
         actor: Actor | sapien.Entity | sapien.Pose | list | np.ndarray,
@@ -685,26 +712,33 @@ class Base_Task(gym.Env):
         # add_robot_visual_box(self, [x_max, y_max, actor_matrix[3, 3]])
         self.prohibited_area.append([x_min, y_min, x_max, y_max])
 
+    # 判断左夹爪是否处于打开状态。
     def is_left_gripper_open(self):
         return self.robot.is_left_gripper_open()
 
+    # 判断右夹爪是否处于打开状态。
     def is_right_gripper_open(self):
         return self.robot.is_right_gripper_open()
 
+    # 判断左夹爪是否处于半开状态。
     def is_left_gripper_open_half(self):
         return self.robot.is_left_gripper_open_half()
 
+    # 判断右夹爪是否处于半开状态。
     def is_right_gripper_open_half(self):
         return self.robot.is_right_gripper_open_half()
 
+    # 判断左夹爪是否处于闭合状态。
     def is_left_gripper_close(self):
         return self.robot.is_left_gripper_close()
 
+    # 判断右夹爪是否处于闭合状态。
     def is_right_gripper_close(self):
         return self.robot.is_right_gripper_close()
 
     # =========================================================== Our APIS ===========================================================
 
+    # 同时闭合左右夹爪，并执行对应控制序列。
     def together_close_gripper(self, save_freq=-1, left_pos=0, right_pos=0):
         left_result, right_result = self.set_gripper(left_pos=left_pos, right_pos=right_pos, set_tag="together")
         control_seq = {
@@ -715,6 +749,7 @@ class Base_Task(gym.Env):
         }
         self.take_dense_action(control_seq, save_freq=save_freq)
 
+    # 同时打开左右夹爪，并执行对应控制序列。
     def together_open_gripper(self, save_freq=-1, left_pos=1, right_pos=1):
         left_result, right_result = self.set_gripper(left_pos=left_pos, right_pos=right_pos, set_tag="together")
         control_seq = {
@@ -725,6 +760,7 @@ class Base_Task(gym.Env):
         }
         self.take_dense_action(control_seq, save_freq=save_freq)
 
+    # 规划左臂移动到目标末端位姿，或在重放模式下读取已缓存路径。
     def left_move_to_pose(
         self,
         pose,
@@ -758,6 +794,7 @@ class Base_Task(gym.Env):
 
         return left_result
 
+    # 规划右臂移动到目标末端位姿，或在重放模式下读取已缓存路径。
     def right_move_to_pose(
         self,
         pose,
@@ -791,6 +828,7 @@ class Base_Task(gym.Env):
 
         return right_result
 
+    # 同步规划并执行左右臂到各自目标末端位姿的运动。
     def together_move_to_pose(
         self,
         left_target_pose,
@@ -881,6 +919,7 @@ class Base_Task(gym.Env):
         if save_freq != None:
             self._take_picture()
 
+    # 执行由 Action 组成的高层动作序列，自动分派到左右臂和夹爪。
     def move(
         self,
         actions_by_arm1: tuple[ArmTag, list[Action]],
@@ -967,6 +1006,7 @@ class Base_Task(gym.Env):
 
         return True
 
+    # 返回指定物体与机器人夹爪发生接触的位置列表。
     def get_gripper_actor_contact_position(self, actor_name):
         contacts = self.scene.get_contacts()
         position_lst = []
@@ -979,6 +1019,7 @@ class Base_Task(gym.Env):
                         position_lst.append(point.position)
         return position_lst
 
+    # 检查两个指定 actor 是否正在接触。
     def check_actors_contact(self, actor1, actor2):
         """
         Check if two actors are in contact.
@@ -993,6 +1034,7 @@ class Base_Task(gym.Env):
                 return True
         return False
 
+    # 调试用：打印当前场景中的接触信息。
     def get_scene_contact(self):
         contacts = self.scene.get_contacts()
         for contact in contacts:
@@ -1000,6 +1042,7 @@ class Base_Task(gym.Env):
             print(dir(contact))
             print(contact.bodies[0].entity.name, contact.bodies[1].entity.name)
 
+    # 从候选目标位姿中选择可规划且路径较短的位姿。
     def choose_best_pose(self, res_pose, center_pose, arm_tag: ArmTag = None):
         """
         Choose the best pose from the list of target poses.
@@ -1024,10 +1067,12 @@ class Base_Task(gym.Env):
         return now_pose
 
     # test grasp pose of all contact points
+    # 调试用：打印物体所有接触点对应的抓取位姿。
     def _print_all_grasp_pose_of_contact_points(self, actor: Actor, pre_dis: float = 0.1):
         for i in range(len(actor.config["contact_points_pose"])):
             print(i, self.get_grasp_pose(actor, pre_dis=pre_dis, contact_point_id=i))
 
+    # 根据物体标注的接触点计算单个抓取位姿。
     def get_grasp_pose(
         self,
         actor: Actor,
@@ -1058,6 +1103,7 @@ class Base_Task(gym.Env):
         res_pose = self.choose_best_pose(res_pose, actor.get_contact_point(contact_point_id, "list"), arm_tag)
         return res_pose
 
+    # 默认抓取位姿选择逻辑，目前主要作为备用实现。
     def _default_choose_grasp_pose(self, actor: Actor, arm_tag: ArmTag, pre_dis: float) -> list:
         """
         Default grasp pose function.
@@ -1077,6 +1123,7 @@ class Base_Task(gym.Env):
 
         return self.get_grasp_pose(actor, arm_tag, pre_dis=pre_dis)
 
+    # 遍历候选接触点，选择更适合指定机械臂执行的预抓取和抓取位姿。
     def choose_grasp_pose(
         self,
         actor: Actor,
@@ -1164,6 +1211,7 @@ class Base_Task(gym.Env):
             return res_pre_side_pose, res_side_pose
         return res_pre_pose, res_pose
 
+    # 构造抓取某个 actor 的高层动作序列。
     def grasp_actor(
         self,
         actor: Actor,
@@ -1217,6 +1265,7 @@ class Base_Task(gym.Env):
                 Action(arm_tag, "close", target_gripper_pos=gripper_pos),
             ]
 
+    # 根据当前抓取关系和目标位姿，计算机械臂放置物体时的末端位姿。
     def get_place_pose(
         self,
         actor: Actor,
@@ -1305,6 +1354,7 @@ class Base_Task(gym.Env):
         res_pose = (target_point - grasp_bias - pre_dis * target_dis_vec).tolist() + target_grasp_qpose.tolist()
         return res_pose
 
+    # 构造将 actor 放到目标位姿附近并可选松爪的高层动作序列。
     def place_actor(
         self,
         actor: Actor,
@@ -1347,6 +1397,7 @@ class Base_Task(gym.Env):
             actions.append(Action(arm_tag, "open", target_gripper_pos=1.0))
         return arm_tag, actions
 
+    # 基于当前末端位姿生成按位移移动的高层动作。
     def move_by_displacement(
         self,
         arm_tag: ArmTag,
@@ -1374,6 +1425,7 @@ class Base_Task(gym.Env):
             origin_pose[3:] = quat
         return arm_tag, [Action(arm_tag, "move", target_pose=origin_pose)]
 
+    # 封装一个移动到指定末端位姿的高层动作。
     def move_to_pose(
         self,
         arm_tag: ArmTag,
@@ -1381,12 +1433,15 @@ class Base_Task(gym.Env):
     ):
         return arm_tag, [Action(arm_tag, "move", target_pose=target_pose)]
 
+    # 封装一个闭合指定夹爪的高层动作。
     def close_gripper(self, arm_tag: ArmTag, pos: float = 0.0):
         return arm_tag, [Action(arm_tag, "close", target_gripper_pos=pos)]
 
+    # 封装一个打开指定夹爪的高层动作。
     def open_gripper(self, arm_tag: ArmTag, pos: float = 1.0):
         return arm_tag, [Action(arm_tag, "open", target_gripper_pos=pos)]
 
+    # 生成指定机械臂回到初始位姿的高层动作。
     def back_to_origin(self, arm_tag: ArmTag):
         if arm_tag == "left":
             return arm_tag, [Action(arm_tag, "move", self.robot.left_original_pose)]
@@ -1394,6 +1449,7 @@ class Base_Task(gym.Env):
             return arm_tag, [Action(arm_tag, "move", self.robot.right_original_pose)]
         return None, []
 
+    # 返回指定机械臂当前末端位姿。
     def get_arm_pose(self, arm_tag: ArmTag):
         if arm_tag == "left":
             return self.robot.get_left_ee_pose()
@@ -1404,6 +1460,7 @@ class Base_Task(gym.Env):
 
     # =========================================================== Control Robot ===========================================================
 
+    # 执行底层稠密控制序列，同步推进机械臂、夹爪、仿真、渲染和数据保存。
     def take_dense_action(self, control_seq, save_freq=-1):
         """
         control_seq:
@@ -1476,6 +1533,7 @@ class Base_Task(gym.Env):
 
         return True  # TODO: maybe need try error
 
+    # 评测时执行 policy 输出的一步动作，支持关节位置或末端位姿动作。
     def take_action(self, action, action_type:Literal['qpos', 'ee']='qpos'):  # action_type: qpos or ee
         if self.take_action_cnt == self.step_lim or self.eval_success:
             return
@@ -1666,6 +1724,7 @@ class Base_Task(gym.Env):
             self.viewer.render()
 
 
+    # 保存当前 head_camera 图像，按任务、生成编号和步骤名组织文件。
     def save_camera_images(self, task_name, step_name, generate_num_id, save_dir="./camera_images"):
         """
         Save camera images - patched version to ensure consistent episode numbering across all steps.
