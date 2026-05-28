@@ -9,7 +9,6 @@ from typing import Protocol
 from etils import epath
 import jax
 import orbax.checkpoint as ocp
-import orbax.checkpoint.future as future
 
 from openpi.shared import array_typing as at
 import openpi.shared.normalize as _normalize
@@ -126,7 +125,8 @@ class CallbackHandler(ocp.AsyncCheckpointHandler):
             args.callback(directory)
 
     async def async_save(self, directory: epath.Path, args: CallbackSave) -> list[futures.Future]:
-        return [future.CommitFutureAwaitingContractedSignals(asyncio.to_thread(self.save, directory, args))]
+        await asyncio.to_thread(self.save, directory, args)
+        return []
 
     def restore(self, *args, **kwargs):
         raise NotImplementedError("CallbackHandler does not support restore")

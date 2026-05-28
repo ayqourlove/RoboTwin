@@ -28,3 +28,7 @@ envs/curobo/*
 
 /*.json*
 /*.txt
+training_data
+env_RoboTwin
+.venv
+uv.lock
