@@ -1364,10 +1364,6 @@ class Base_Task(gym.Env):
             target_dis=grasp_dis,
             contact_point_id=contact_point_id,
         )
-        if pre_grasp_pose is None or grasp_pose is None:
-            self.plan_success = False
-            return arm_tag, []
-
         if pre_grasp_pose == grasp_pose:
             # 如果预抓取点和抓取点相同，就直接移动后闭合夹爪。
             return arm_tag, [
