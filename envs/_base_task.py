@@ -864,6 +864,7 @@ class Base_Task(gym.Env):
             self.left_cnt += 1
 
         if left_result["status"] != "Success":
+            print(f"[left_move_to_pose] planning failed: status={left_result.get('status')}, pose={pose}")
             self.plan_success = False
             return
 
@@ -900,6 +901,7 @@ class Base_Task(gym.Env):
             self.right_cnt += 1
 
         if right_result["status"] != "Success":
+            print(f"[right_move_to_pose] planning failed: status={right_result.get('status')}, pose={pose}")
             self.plan_success = False
             return
 
@@ -1160,6 +1162,11 @@ class Base_Task(gym.Env):
                 continue
             if now_pose is None or len(traj_lst["position"][i]) < now_step:
                 now_pose = target_lst[i]
+        if now_pose is None:
+            print(
+                f"[choose_best_pose] no feasible pose: arm={arm_tag}, "
+                f"pose_num={pose_num}, center_pose={np.array(center_pose)}"
+            )
         return now_pose
 
     # test grasp pose of all contact points
@@ -1309,6 +1316,13 @@ class Base_Task(gym.Env):
             return res_pre_top_down_pose, res_top_down_pose
         if dis_side < 0.15:
             return res_pre_side_pose, res_side_pose
+        if res_pre_pose is None or res_pose is None:
+            actor_name = actor.get_name() if hasattr(actor, "get_name") else str(actor)
+            print(
+                f"[choose_grasp_pose] no grasp pose: actor={actor_name}, "
+                f"arm={arm_tag}, pre_dis={pre_dis}, target_dis={target_dis}, "
+                f"contact_point_id={contact_point_id}"
+            )
         return res_pre_pose, res_pose
 
     # 构造抓取某个 actor 的高层动作序列。

@@ -136,6 +136,7 @@ def run(TASK_ENV, args):
                     suc_num += 1
                 else:
                     print(f"simulate data episode {suc_num} fail! (seed = {epid})")
+                    print(f"  plan_success={TASK_ENV.plan_success}, check_success={TASK_ENV.check_success()}")
                     fail_num += 1
 
                 TASK_ENV.close_env()
@@ -154,10 +155,10 @@ def run(TASK_ENV, args):
                     TASK_ENV.viewer.close()
                 time.sleep(0.3)
             except Exception as e:
-                # stack_trace = traceback.format_exc()
+                stack_trace = traceback.format_exc()
                 print(" -------------")
                 print(f"simulate data episode {suc_num} fail! (seed = {epid})")
-                print("Error: ", e)
+                print("Error: ", stack_trace)
                 print(" -------------")
                 fail_num += 1
                 TASK_ENV.close_env()

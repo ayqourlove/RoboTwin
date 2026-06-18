@@ -1,6 +1,12 @@
 aloha-agilex:
   file_path: "./assets/embodiments/aloha-agilex/"
 
+realman:
+  file_path: "./assets/embodiments/realman/"
+
+realman-dual:
+  file_path: "./assets/embodiments/realman-dual/"
+
 piper:
   file_path: "./assets/embodiments/piper"
 

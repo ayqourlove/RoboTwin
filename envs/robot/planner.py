@@ -228,6 +228,8 @@ try:
             try:
                 result = self.motion_gen_batch.plan_batch(start_joint_states, goal_pose_of_ee, plan_config)
             except Exception as e:
+                print("[CuroboPlanner.plan_batch] exception:")
+                traceback.print_exc()
                 return {"status": ["Failure" for i in range(10)]}
 
             # output
@@ -238,6 +240,14 @@ try:
             res_result["status"] = status_array
 
             if np.all(res_result["status"] == "Failure"):
+                poses_np = np.array(poses_list)
+                print(
+                    "[CuroboPlanner.plan_batch] all candidates failed "
+                    f"arm={arms_tag}, num_poses={num_poses}, "
+                    f"target_xyz_min={poses_np[:, :3].min(axis=0)}, "
+                    f"target_xyz_max={poses_np[:, :3].max(axis=0)}, "
+                    f"start_joint={joint_angles}"
+                )
                 return res_result
 
             res_result["position"] = np.array(result.interpolated_plan.position.to("cpu"))

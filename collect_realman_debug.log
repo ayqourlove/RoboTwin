@@ -1,0 +1,55 @@
+[32mRender Well[0m
+============= Config =============
+
+[95mMessy Table:[0m False
+[95mRandom Background:[0m False
+[95mRandom Light:[0m False
+[95mRandom Table Height:[0m 0
+[95mRandom Head Camera Distance:[0m 0
+[94mHead Camera Config:[0m D435, True
+[94mWrist Camera Config:[0m D435, True
+[94mEmbodiment Config:[0m realman-dual
+
+==================================
+Task Name: [34mbeat_block_hammer[0m
+[93m[Start Seed and Pre Motion Data Collection][0m
+Exist seed file, Start from: 0 / 0
+ -------------
+simulate data episode 0 fail! (seed = 0)
+Error:  Traceback (most recent call last):
+  File "/home/gzy/vla/RoboTwin/script/collect_data.py", line 129, in run
+    TASK_ENV.setup_demo(now_ep_num=suc_num, seed=epid, **args)
+  File "/home/gzy/vla/RoboTwin/./envs/beat_block_hammer.py", line 12, in setup_demo
+    super()._init_task_env_(**kwags)
+  File "/home/gzy/vla/RoboTwin/./envs/_base_task.py", line 107, in _init_task_env_
+    self.setup_scene()
+  File "/home/gzy/vla/RoboTwin/./envs/_base_task.py", line 303, in setup_scene
+    self.viewer = Viewer(self.renderer)
+  File "/home/gzy/vla/RoboTwin/env_RoboTwin/lib/python3.10/site-packages/sapien/utils/viewer/viewer.py", line 73, in __init__
+    self.window = RenderWindow(*resolution, self.shader_dir)
+RuntimeError: Create window failed: Renderer does not support display.
+
+ -------------
+Traceback (most recent call last):
+  File "/home/gzy/vla/RoboTwin/script/collect_data.py", line 129, in run
+    TASK_ENV.setup_demo(now_ep_num=suc_num, seed=epid, **args)
+  File "/home/gzy/vla/RoboTwin/./envs/beat_block_hammer.py", line 12, in setup_demo
+    super()._init_task_env_(**kwags)
+  File "/home/gzy/vla/RoboTwin/./envs/_base_task.py", line 107, in _init_task_env_
+    self.setup_scene()
+  File "/home/gzy/vla/RoboTwin/./envs/_base_task.py", line 303, in setup_scene
+    self.viewer = Viewer(self.renderer)
+  File "/home/gzy/vla/RoboTwin/env_RoboTwin/lib/python3.10/site-packages/sapien/utils/viewer/viewer.py", line 73, in __init__
+    self.window = RenderWindow(*resolution, self.shader_dir)
+RuntimeError: Create window failed: Renderer does not support display.
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "/home/gzy/vla/RoboTwin/script/collect_data.py", line 251, in <module>
+    main(task_name=task_name, task_config=task_config)
+  File "/home/gzy/vla/RoboTwin/script/collect_data.py", line 103, in main
+    run(task, args)
+  File "/home/gzy/vla/RoboTwin/script/collect_data.py", line 167, in run
+    TASK_ENV.viewer.close()
+AttributeError: 'beat_block_hammer' object has no attribute 'viewer'
