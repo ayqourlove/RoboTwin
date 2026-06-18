@@ -107,6 +107,7 @@ class Robot:
             self._entity = loader.load(self.left_urdf_path)
             self.left_entity = self._entity
             self.right_entity = self._entity
+            self._disable_self_collisions(self._entity, group_id=0x101)
         else:
             arms_dis = kwargs["embodiment_dis"]
             self.left_entity_origion_pose.p += [-arms_dis / 2, 0, 0]
@@ -117,9 +118,21 @@ class Robot:
             right_loader.fix_root_link = True
             self.left_entity = left_loader.load(self.left_urdf_path)
             self.right_entity = right_loader.load(self.right_urdf_path)
+            self._disable_self_collisions(self.left_entity, group_id=0x101)
+            self._disable_self_collisions(self.right_entity, group_id=0x102)
 
         self.left_entity.set_root_pose(self.left_entity_origion_pose)
         self.right_entity.set_root_pose(self.right_entity_origion_pose)
+
+    def _disable_self_collisions(self, articulation, group_id: int):
+        """Keep robot-object collisions, but ignore collisions inside one articulation."""
+        group_id &= 0xFFFF
+        for link in articulation.get_links():
+            for shape in link.get_collision_shapes():
+                groups = shape.get_collision_groups()
+                groups[2] |= 1
+                groups[3] = (groups[3] & ~0xFFFF) | group_id
+                shape.set_collision_groups(groups)
 
     def reset(self, scene, need_topp=False, **kwargs):
         self._init_robot_(scene, need_topp, **kwargs)
@@ -575,7 +588,7 @@ class Robot:
         return self._trans_endpose(arm_tag="right", is_endpose=True)
 
     def get_left_orig_endpose(self):
-        pose = self.left_ee.global_pose
+        pose = self.left_ee.child_link.get_entity_pose()
         global_trans_matrix = self.left_global_trans_matrix
         pose.p = pose.p - self.left_entity_origion_pose.p
         pose.p = t3d.quaternions.quat2mat(self.left_entity_origion_pose.q).T @ pose.p
@@ -584,7 +597,7 @@ class Robot:
             @ global_trans_matrix).tolist())
 
     def get_right_orig_endpose(self):
-        pose = self.right_ee.global_pose
+        pose = self.right_ee.child_link.get_entity_pose()
         global_trans_matrix = self.right_global_trans_matrix
         pose.p = pose.p - self.right_entity_origion_pose.p
         pose.p = t3d.quaternions.quat2mat(self.right_entity_origion_pose.q).T @ pose.p
@@ -599,7 +612,8 @@ class Robot:
         gripper_bias = (self.left_gripper_bias if arm_tag == "left" else self.right_gripper_bias)
         global_trans_matrix = (self.left_global_trans_matrix if arm_tag == "left" else self.right_global_trans_matrix)
         delta_matrix = (self.left_delta_matrix if arm_tag == "left" else self.right_delta_matrix)
-        ee_pose = (self.left_ee.global_pose if arm_tag == "left" else self.right_ee.global_pose)
+        ee_joint = self.left_ee if arm_tag == "left" else self.right_ee
+        ee_pose = ee_joint.child_link.get_entity_pose()
         endpose_arr = np.eye(4)
         endpose_arr[:3, :3] = (t3d.quaternions.quat2mat(ee_pose.q) @ global_trans_matrix @ delta_matrix)
         dis = gripper_bias
