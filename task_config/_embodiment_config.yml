@@ -1,12 +1,6 @@
 aloha-agilex:
   file_path: "./assets/embodiments/aloha-agilex/"
 
-realman:
-  file_path: "./assets/embodiments/realman/"
-
-realman-dual:
-  file_path: "./assets/embodiments/realman-dual/"
-
 piper:
   file_path: "./assets/embodiments/piper"
 
@@ -18,3 +12,15 @@ ARX-X5:
 
 ur5-wsg:
   file_path: "./assets/embodiments/ur5-wsg"
+
+A1X:
+  file_path: "./assets/embodiments/A1X"
+
+realman-new:
+  file_path: "./assets/embodiments/realman-new"
+
+realman-dual:
+  file_path: "./assets/embodiments/realman-dual"
+
+realman:
+  file_path: "./assets/embodiments/realman"

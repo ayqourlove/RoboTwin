@@ -1,10 +1,14 @@
 # if you want to modify the config, please check the following tutorial first:
 # https://robotwin-platform.github.io/doc/usage/configurations.html
 render_freq: 0
-episode_num: 5
+
+episode_num: 100
 use_seed: false
 save_freq: 15
-embodiment: [realman-dual]
+embodiment: [realman]
+# embodiment: [realman-new]
+# embodiment: [aloha-agilex]
+# embodiment: [franka-panda, franka-panda, 0.3]
 language_num: 100
 domain_randomization:
   random_background: false
@@ -15,10 +19,11 @@ domain_randomization:
   random_light: false
   crazy_random_light_rate: 0
 camera:
-  head_camera_type: D435
-  wrist_camera_type: D435
+  head_camera_type: Real_D435
+  wrist_camera_type: Real_D435
   collect_head_camera: true
   collect_wrist_camera: true
+  save_wrist_camera_video: false
 data_type:
   rgb: true
   third_view: false

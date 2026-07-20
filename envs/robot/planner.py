@@ -51,7 +51,12 @@ try:
             # translate from baselink to arm's base
             with open(self.yml_path, "r") as f:
                 yml_data = yaml.safe_load(f)
-            self.frame_bias = yml_data["planner"]["frame_bias"]
+            planner_cfg = yml_data["planner"]
+            self.frame_bias = planner_cfg["frame_bias"]
+            self.frame_rpy = planner_cfg.get("frame_rpy", None)
+            self.frame_rot_mat = None
+            if self.frame_rpy is not None:
+                self.frame_rot_mat = t3d.euler.euler2mat(*self.frame_rpy, axes="sxyz")
 
             # motion generation
             if True:
@@ -104,9 +109,8 @@ try:
             world_target_pose = np.concatenate([np.array(target_gripper_pose.p), np.array(target_gripper_pose.q)])
             target_pose_p, target_pose_q = self._trans_from_world_to_base(world_base_pose, world_target_pose)
             if not ("aloha-agilex" in self.yml_path):
-                target_pose_p[0] += self.frame_bias[0]
-                target_pose_p[1] += self.frame_bias[1]
-                target_pose_p[2] += self.frame_bias[2]
+                pass
+                target_pose_p, target_pose_q = self._apply_frame_transform(target_pose_p, target_pose_q)
             else: # patch for aloha-agilex
                 T_target = t3d.affines.compose(target_pose_p, t3d.quaternions.quat2mat(target_pose_q), [1, 1, 1])
                 T_bias = t3d.affines.compose(self.frame_bias, np.eye(3), [1, 1, 1])
@@ -186,9 +190,10 @@ try:
                 base_target_pose_p, base_target_pose_q = self._trans_from_world_to_base(world_base_pose, world_target_pose)
 
                 if not ("aloha-agilex" in self.yml_path):
-                    base_target_pose_p[0] += self.frame_bias[0]
-                    base_target_pose_p[1] += self.frame_bias[1]
-                    base_target_pose_p[2] += self.frame_bias[2]
+                    base_target_pose_p, base_target_pose_q = self._apply_frame_transform(
+                        base_target_pose_p,
+                        base_target_pose_q,
+                    )
                 else: # patch for aloha-agilex
                     T_target = t3d.affines.compose(base_target_pose_p, t3d.quaternions.quat2mat(base_target_pose_q), [1, 1, 1])
                     T_bias = t3d.affines.compose(self.frame_bias, np.eye(3), [1, 1, 1])
@@ -228,8 +233,6 @@ try:
             try:
                 result = self.motion_gen_batch.plan_batch(start_joint_states, goal_pose_of_ee, plan_config)
             except Exception as e:
-                print("[CuroboPlanner.plan_batch] exception:")
-                traceback.print_exc()
                 return {"status": ["Failure" for i in range(10)]}
 
             # output
@@ -240,14 +243,6 @@ try:
             res_result["status"] = status_array
 
             if np.all(res_result["status"] == "Failure"):
-                poses_np = np.array(poses_list)
-                print(
-                    "[CuroboPlanner.plan_batch] all candidates failed "
-                    f"arm={arms_tag}, num_poses={num_poses}, "
-                    f"target_xyz_min={poses_np[:, :3].min(axis=0)}, "
-                    f"target_xyz_max={poses_np[:, :3].max(axis=0)}, "
-                    f"start_joint={joint_angles}"
-                )
                 return res_result
 
             res_result["position"] = np.array(result.interpolated_plan.position.to("cpu"))
@@ -264,6 +259,21 @@ try:
             res["per_step"] = step
             res["result"] = vals
             return res
+
+        def _apply_frame_transform(self, target_pose_p, target_pose_q):
+            target_pose_p = np.array(target_pose_p, dtype=np.float64) + np.array(self.frame_bias, dtype=np.float64)
+            target_pose_q = np.array(target_pose_q, dtype=np.float64)
+
+            if self.frame_rot_mat is None:
+                return target_pose_p, target_pose_q
+
+            # frame_rpy describes the arm base pose in the parent/root frame. Planning
+            # targets must be expressed in the arm base frame, so apply the inverse.
+            parent_R_arm = self.frame_rot_mat
+            arm_R_parent = parent_R_arm.T
+            target_pose_p = arm_R_parent @ target_pose_p
+            target_pose_q = t3d.quaternions.mat2quat(arm_R_parent @ t3d.quaternions.quat2mat(target_pose_q))
+            return target_pose_p, target_pose_q
 
         def _trans_from_world_to_base(self, base_pose, target_pose):
             '''

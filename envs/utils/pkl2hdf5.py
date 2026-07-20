@@ -75,7 +75,7 @@ def create_hdf5_from_dict(hdf5_group, data_dict):
                 print(f"Error storing value for key '{key}': {e}")
 
 
-def pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path):
+def pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path, save_wrist_camera_video=False):
     data_list = parse_dict_structure(load_pkl_file(pkl_files[0]))
     for pkl_file_path in pkl_files:
         pkl_file = load_pkl_file(pkl_file_path)
@@ -83,11 +83,28 @@ def pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path):
 
     images_to_video(np.array(data_list["observation"]["head_camera"]["rgb"]), out_path=video_path)
 
+    if save_wrist_camera_video:
+        video_base, video_ext = os.path.splitext(video_path)
+        for camera_name in ("left_camera", "right_camera"):
+            try:
+                frames = data_list["observation"][camera_name]["rgb"]
+            except KeyError as exc:
+                raise ValueError(
+                    f"Cannot save {camera_name} video because its RGB frames were not collected"
+                ) from exc
+            camera_video_path = f"{video_base}_{camera_name}{video_ext}"
+            images_to_video(np.array(frames), out_path=camera_video_path)
+
     with h5py.File(hdf5_path, "w") as f:
         create_hdf5_from_dict(f, data_list)
 
 
-def process_folder_to_hdf5_video(folder_path, hdf5_path, video_path):
+def process_folder_to_hdf5_video(
+    folder_path,
+    hdf5_path,
+    video_path,
+    save_wrist_camera_video=False,
+):
     pkl_files = []
     for fname in os.listdir(folder_path):
         if fname.endswith(".pkl") and fname[:-4].isdigit():
@@ -106,4 +123,9 @@ def process_folder_to_hdf5_video(folder_path, hdf5_path, video_path):
             raise ValueError(f"Missing file {expected}.pkl")
         expected += 1
 
-    pkl_files_to_hdf5_and_video(pkl_files, hdf5_path, video_path)
+    pkl_files_to_hdf5_and_video(
+        pkl_files,
+        hdf5_path,
+        video_path,
+        save_wrist_camera_video=save_wrist_camera_video,
+    )

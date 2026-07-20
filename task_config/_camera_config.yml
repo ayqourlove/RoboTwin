@@ -17,3 +17,11 @@ Large_D435:
   fovy: 37
   w: 640
   h: 480
+
+# Calibrated from middle_camera_color_optical_frame CameraInfo.
+# fx=608.279052734375, fy=609.8158569335938
+# cx=315.49078369140625, cy=257.00933837890625
+Real_D435:
+  fovy: 42.965370700143
+  w: 640
+  h: 480

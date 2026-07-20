@@ -18,7 +18,7 @@ eval_result/
 assets/*
 !assets/_download.py
 !assets/files
-
+!assets/embodiments/realman
 policy/weights/*
 
 envs/curobo/*
@@ -28,7 +28,3 @@ envs/curobo/*
 
 /*.json*
 /*.txt
-training_data
-env_RoboTwin
-.venv
-uv.lock

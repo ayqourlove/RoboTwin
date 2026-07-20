@@ -1,4 +1,5 @@
 adjust_bottle: 400
+adjust_bottle_singlearm: 400
 beat_block_hammer: 400
 blocks_ranking_rgb: 1200
 blocks_ranking_size: 1200
@@ -19,6 +20,7 @@ pick_diverse_bottles: 400
 pick_dual_bottles: 400
 place_a2b_left: 400
 place_a2b_right: 400
+place_a2b_right_singlearm: 400
 place_bread_basket: 700
 place_bread_skillet: 500
 place_can_basket: 700

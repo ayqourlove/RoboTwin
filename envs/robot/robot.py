@@ -23,6 +23,62 @@ class Robot:
         ta.setup_logging("CRITICAL")  # hide logging
         self._init_robot_(scene, need_topp, **kwargs)
 
+    @staticmethod
+    def _disable_collision_pairs(articulation, collision_pairs):
+        """Disable selected internal link collisions with SAPIEN filter bits."""
+        if not collision_pairs:
+            return
+
+        unique_pairs = []
+        seen_pairs = set()
+        for pair in collision_pairs:
+            if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+                raise ValueError(f"Invalid collision pair: {pair}. Expected [link_a, link_b].")
+
+            link_a_name, link_b_name = pair
+            if link_a_name == link_b_name:
+                raise ValueError(f"A collision pair must contain two different links: {pair}")
+
+            pair_key = tuple(sorted((link_a_name, link_b_name)))
+            if pair_key not in seen_pairs:
+                seen_pairs.add(pair_key)
+                unique_pairs.append((link_a_name, link_b_name))
+
+        used_filter_bits = 0
+        for link in articulation.get_links():
+            for shape in link.get_collision_shapes():
+                used_filter_bits |= int(shape.get_collision_groups()[2])
+
+        available_masks = [
+            1 << bit_index for bit_index in range(30, -1, -1)
+            if not used_filter_bits & (1 << bit_index)
+        ]
+        if len(unique_pairs) > len(available_masks):
+            raise ValueError(
+                f"Not enough free SAPIEN collision filter bits for {len(unique_pairs)} pairs."
+            )
+
+        for (link_a_name, link_b_name), ignore_mask in zip(unique_pairs, available_masks):
+            link_a = articulation.find_link_by_name(link_a_name)
+            link_b = articulation.find_link_by_name(link_b_name)
+            if link_a is None or link_b is None:
+                raise ValueError(
+                    f"Cannot disable collision pair {link_a_name} <-> {link_b_name}: link not found."
+                )
+
+            link_a_shapes = link_a.get_collision_shapes()
+            link_b_shapes = link_b.get_collision_shapes()
+            if not link_a_shapes or not link_b_shapes:
+                raise ValueError(
+                    f"Cannot disable collision pair {link_a_name} <-> {link_b_name}: no collision shapes."
+                )
+
+            # Shapes sharing a group-2 bit are excluded from colliding with each other.
+            for shape in link_a_shapes + link_b_shapes:
+                collision_groups = list(shape.get_collision_groups())
+                collision_groups[2] |= ignore_mask
+                shape.set_collision_groups(collision_groups)
+
     def _init_robot_(self, scene, need_topp=False, **kwargs):
         # self.dual_arm = dual_arm_tag
         # self.plan_success = True
@@ -107,7 +163,9 @@ class Robot:
             self._entity = loader.load(self.left_urdf_path)
             self.left_entity = self._entity
             self.right_entity = self._entity
-            self._disable_self_collisions(self._entity, group_id=0x101)
+            collision_pairs = list(left_embodiment_args.get("disable_collision_pairs", []))
+            collision_pairs.extend(right_embodiment_args.get("disable_collision_pairs", []))
+            self._disable_collision_pairs(self._entity, collision_pairs)
         else:
             arms_dis = kwargs["embodiment_dis"]
             self.left_entity_origion_pose.p += [-arms_dis / 2, 0, 0]
@@ -118,28 +176,22 @@ class Robot:
             right_loader.fix_root_link = True
             self.left_entity = left_loader.load(self.left_urdf_path)
             self.right_entity = right_loader.load(self.right_urdf_path)
-            self._disable_self_collisions(self.left_entity, group_id=0x101)
-            self._disable_self_collisions(self.right_entity, group_id=0x102)
+            self._disable_collision_pairs(
+                self.left_entity,
+                left_embodiment_args.get("disable_collision_pairs", []),
+            )
+            self._disable_collision_pairs(
+                self.right_entity,
+                right_embodiment_args.get("disable_collision_pairs", []),
+            )
 
         self.left_entity.set_root_pose(self.left_entity_origion_pose)
         self.right_entity.set_root_pose(self.right_entity_origion_pose)
 
-    def _disable_self_collisions(self, articulation, group_id: int):
-        """Keep robot-object collisions, but ignore collisions inside one articulation."""
-        group_id &= 0xFFFF
-        for link in articulation.get_links():
-            for shape in link.get_collision_shapes():
-                groups = shape.get_collision_groups()
-                groups[2] |= 1
-                groups[3] = (groups[3] & ~0xFFFF) | group_id
-                shape.set_collision_groups(groups)
-
     def reset(self, scene, need_topp=False, **kwargs):
         self._init_robot_(scene, need_topp, **kwargs)
 
-        if not hasattr(self, "communication_flag"):
-            self.set_planner(scene=scene)
-        elif self.communication_flag:
+        if self.communication_flag:
             if hasattr(self, "left_conn") and self.left_conn:
                 self.left_conn.send({"cmd": "reset"})
                 _ = self.left_conn.recv()
@@ -147,12 +199,7 @@ class Robot:
                 self.right_conn.send({"cmd": "reset"})
                 _ = self.right_conn.recv()
         else:
-            if (
-                not hasattr(self, "left_planner")
-                or not hasattr(self, "right_planner")
-                or not isinstance(self.left_planner, CuroboPlanner)
-                or not isinstance(self.right_planner, CuroboPlanner)
-            ):
+            if not isinstance(self.left_planner, CuroboPlanner) or not isinstance(self.right_planner, CuroboPlanner):
                 self.set_planner(scene=scene)
 
         self.init_joints()
@@ -588,7 +635,7 @@ class Robot:
         return self._trans_endpose(arm_tag="right", is_endpose=True)
 
     def get_left_orig_endpose(self):
-        pose = self.left_ee.child_link.get_entity_pose()
+        pose = self.left_ee.global_pose
         global_trans_matrix = self.left_global_trans_matrix
         pose.p = pose.p - self.left_entity_origion_pose.p
         pose.p = t3d.quaternions.quat2mat(self.left_entity_origion_pose.q).T @ pose.p
@@ -597,7 +644,7 @@ class Robot:
             @ global_trans_matrix).tolist())
 
     def get_right_orig_endpose(self):
-        pose = self.right_ee.child_link.get_entity_pose()
+        pose = self.right_ee.global_pose
         global_trans_matrix = self.right_global_trans_matrix
         pose.p = pose.p - self.right_entity_origion_pose.p
         pose.p = t3d.quaternions.quat2mat(self.right_entity_origion_pose.q).T @ pose.p
@@ -612,8 +659,7 @@ class Robot:
         gripper_bias = (self.left_gripper_bias if arm_tag == "left" else self.right_gripper_bias)
         global_trans_matrix = (self.left_global_trans_matrix if arm_tag == "left" else self.right_global_trans_matrix)
         delta_matrix = (self.left_delta_matrix if arm_tag == "left" else self.right_delta_matrix)
-        ee_joint = self.left_ee if arm_tag == "left" else self.right_ee
-        ee_pose = ee_joint.child_link.get_entity_pose()
+        ee_pose = (self.left_ee.global_pose if arm_tag == "left" else self.right_ee.global_pose)
         endpose_arr = np.eye(4)
         endpose_arr[:3, :3] = (t3d.quaternions.quat2mat(ee_pose.q) @ global_trans_matrix @ delta_matrix)
         dis = gripper_bias

@@ -18,6 +18,7 @@ camera:
   wrist_camera_type: D435
   collect_head_camera: true
   collect_wrist_camera: true
+  save_wrist_camera_video: false
 data_type:
   rgb: true
   third_view: false

@@ -13,8 +13,9 @@ import json
 import traceback
 import os
 import time
+import numpy as np
 from argparse import ArgumentParser
-
+from envs._base_task import Base_Task
 current_file_path = os.path.abspath(__file__)
 parent_directory = os.path.dirname(current_file_path)
 
@@ -34,6 +35,43 @@ def get_embodiment_config(robot_file):
     with open(robot_config_file, "r", encoding="utf-8") as f:
         embodiment_args = yaml.load(f.read(), Loader=yaml.FullLoader)
     return embodiment_args
+
+
+def _json_safe(value):
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    if isinstance(value, sapien.Pose):
+        return value.p.tolist() + value.q.tolist()
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    return str(value)
+
+
+def append_failure_record(args, seed, failure_type, message, details=None, episode_index=None):
+    try:
+        record = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "task_name": args["task_name"],
+            "task_config": args["task_config"],
+            "phase": "seed_collection",
+            "seed": int(seed),
+            "episode_index": episode_index,
+            "failure_type": failure_type,
+            "message": str(message),
+            "details": _json_safe(details or {}),
+        }
+        log_path = os.path.join(args["save_path"], "failure_seeds.jsonl")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as file:
+            file.write(json.dumps(record, ensure_ascii=False) + "\n")
+    except Exception as log_error:
+        print(f"Warning: failed to write failure seed log: {log_error}")
 
 
 def main(task_name=None, task_config=None):
@@ -93,7 +131,8 @@ def main(task_name=None, task_config=None):
     print("\033[94mHead Camera Config:\033[0m " + str(args["camera"]["head_camera_type"]) + f", " +
           str(args["camera"]["collect_head_camera"]))
     print("\033[94mWrist Camera Config:\033[0m " + str(args["camera"]["wrist_camera_type"]) + f", " +
-          str(args["camera"]["collect_wrist_camera"]))
+          str(args["camera"]["collect_wrist_camera"]) + ", save video: " +
+          str(args["camera"].get("save_wrist_camera_video", False)))
     print("\033[94mEmbodiment Config:\033[0m " + embodiment_name)
     print("\n==================================")
 
@@ -103,7 +142,7 @@ def main(task_name=None, task_config=None):
     run(task, args)
 
 
-def run(TASK_ENV, args):
+def run(TASK_ENV: Base_Task, args):
     epid, suc_num, fail_num, seed_list = 0, 0, 0, []
 
     print(f"Task Name: \033[34m{args['task_name']}\033[0m")
@@ -129,14 +168,24 @@ def run(TASK_ENV, args):
                 TASK_ENV.setup_demo(now_ep_num=suc_num, seed=epid, **args)
                 TASK_ENV.play_once()
 
-                if TASK_ENV.plan_success and TASK_ENV.check_success():
+                task_success = TASK_ENV.check_success() if TASK_ENV.plan_success else False
+                if TASK_ENV.plan_success and task_success:
                     print(f"simulate data episode {suc_num} success! (seed = {epid})")
                     seed_list.append(epid)
                     TASK_ENV.save_traj_data(suc_num)
                     suc_num += 1
                 else:
                     print(f"simulate data episode {suc_num} fail! (seed = {epid})")
-                    print(f"  plan_success={TASK_ENV.plan_success}, check_success={TASK_ENV.check_success()}")
+                    details = getattr(TASK_ENV, "last_failure_info", None)
+                    failure_type = "planning_failed" if not TASK_ENV.plan_success else "task_check_failed"
+                    append_failure_record(
+                        args,
+                        epid,
+                        failure_type,
+                        "Planning failed" if not TASK_ENV.plan_success else "Task success check failed",
+                        details=details,
+                        episode_index=suc_num,
+                    )
                     fail_num += 1
 
                 TASK_ENV.close_env()
@@ -148,6 +197,14 @@ def run(TASK_ENV, args):
                 print(f"simulate data episode {suc_num} fail! (seed = {epid})")
                 print("Error: ", e)
                 print(" -------------")
+                append_failure_record(
+                    args,
+                    epid,
+                    "objects_unstable",
+                    e,
+                    details=getattr(TASK_ENV, "last_failure_info", None),
+                    episode_index=suc_num,
+                )
                 fail_num += 1
                 TASK_ENV.close_env()
 
@@ -155,11 +212,22 @@ def run(TASK_ENV, args):
                     TASK_ENV.viewer.close()
                 time.sleep(0.3)
             except Exception as e:
-                stack_trace = traceback.format_exc()
+                # stack_trace = traceback.format_exc()
                 print(" -------------")
                 print(f"simulate data episode {suc_num} fail! (seed = {epid})")
-                print("Error: ", stack_trace)
+                print("Error: ", e)
                 print(" -------------")
+                details = getattr(TASK_ENV, "last_failure_info", None)
+                failure_type = (details.get("failure_type", "exception")
+                                if isinstance(details, dict) else "exception")
+                append_failure_record(
+                    args,
+                    epid,
+                    failure_type,
+                    e,
+                    details=details,
+                    episode_index=suc_num,
+                )
                 fail_num += 1
                 TASK_ENV.close_env()
 
