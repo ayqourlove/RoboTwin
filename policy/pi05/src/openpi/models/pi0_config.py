@@ -17,6 +17,13 @@ if TYPE_CHECKING:
 
 @dataclasses.dataclass(frozen=True)
 class Pi0Config(_model.BaseModelConfig):
+    """pi0 / pi0.5 共用的模型结构配置。
+
+    本仓库没有单独的 ``Pi05`` 类，而是通过 ``pi05=True`` 切换两处关键实现：
+    1. 把归一化后的机器人 state 离散化并拼进语言 prompt；
+    2. 用 action expert 的 adaptive RMSNorm 注入 flow-matching 时间步。
+    """
+
     dtype: str = "bfloat16"
     paligemma_variant: _gemma.Variant = "gemma_2b"
     action_expert_variant: _gemma.Variant = "gemma_300m"
@@ -53,6 +60,8 @@ class Pi0Config(_model.BaseModelConfig):
 
     @override
     def inputs_spec(self, *, batch_size: int = 1) -> tuple[_model.Observation, _model.Actions]:
+        # 这里声明的是进入模型后的统一形状，而不是 LeRobot 文件里的原始形状。
+        # 例如 ALOHA/RoboTwin 的 14 维 state/action 会在数据变换中补零到 action_dim=32。
         image_spec = jax.ShapeDtypeStruct([batch_size, *_model.IMAGE_RESOLUTION, 3], jnp.float32)
         image_mask_spec = jax.ShapeDtypeStruct([batch_size], jnp.bool_)
 
@@ -77,7 +86,12 @@ class Pi0Config(_model.BaseModelConfig):
         return observation_spec, action_spec
 
     def get_freeze_filter(self) -> nnx.filterlib.Filter:
-        """Returns the freeze filter based on the model config."""
+        """根据模型 variant 生成冻结参数过滤器。
+
+        注意：选择 LoRA variant 的含义是冻结对应 Gemma 主干、保留其 LoRA 参数可训练；
+        它并不等于“整个模型只训练 LoRA”。视觉编码器和动作投影层等不匹配
+        ``.*llm.*`` 的参数仍然可训练。
+        """
         filters = []
         has_lora = False
         gemma_params_filter = nnx_utils.PathRegex(".*llm.*")

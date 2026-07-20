@@ -124,7 +124,9 @@ class RMSNorm(nn.Module):
             )  # scale by learned parameter in float32 (matches Flax implementation)
             return normed_inputs.astype(dtype), None  # return in original dtype
 
-        # adaptive RMSNorm
+        # adaptive RMSNorm：由每个样本的 flow timestep 条件生成 scale、shift 和 gate。
+        # Dense 采用零初始化，因此训练刚开始时它近似普通归一化且残差分支被 gate 抑制，
+        # 随训练再逐步学会针对不同噪声阶段调制 action expert。
         modulation = nn.Dense(x.shape[-1] * 3, kernel_init=nn.initializers.zeros, dtype=dtype)(cond)
         scale, shift, gate = jnp.split(modulation[:, None, :], 3, axis=-1)
         normed_inputs = normed_inputs * (1 + scale) + shift  # scale and shift in float32
@@ -456,4 +458,6 @@ def _gated_residual(x, y, gate):
         return None
     if gate is None:
         return x + y
+    # pi0.5 的 action expert 使用 timestep 产生的 gate 控制 attention/FFN
+    # 残差写回强度；PaliGemma expert 的 gate 为 None，仍使用普通残差相加。
     return x + y * gate

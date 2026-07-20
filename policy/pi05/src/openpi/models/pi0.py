@@ -37,6 +37,8 @@ def make_attn_mask(input_mask, mask_ar):
       mask_ar: bool[?B, N] mask that's true where previous tokens cannot depend on
         it and false where it shares the same attention mask as the previous token.
     """
+    # cumsum 把序列划分成若干注意力 block。查询 token 只能看到编号不大于
+    # 自己的 block；同一 block 内则双向可见。最后再屏蔽 padding token。
     mask_ar = jnp.broadcast_to(mask_ar, input_mask.shape)
     cumsum = jnp.cumsum(mask_ar, axis=1)
     attn_mask = cumsum[:, None, :] <= cumsum[:, :, None]
@@ -67,6 +69,8 @@ class Pi0(_model.BaseModel):
     def __init__(self, config: pi0_config.Pi0Config, rngs: nnx.Rngs):
         super().__init__(config.action_dim, config.action_horizon, config.max_token_len)
         self.pi05 = config.pi05
+        # 两个 expert 使用各自的 Gemma 参数：前者理解图像/语言，后者产生动作特征。
+        # 它们在 Transformer attention 中交换信息，但不共享 FFN/RMSNorm 参数。
         paligemma_config = _gemma.get_config(config.paligemma_variant)
         action_expert_config = _gemma.get_config(config.action_expert_variant)
         # TODO: rewrite gemma in NNX. For now, use bridge.
@@ -78,6 +82,7 @@ class Pi0(_model.BaseModel):
             )
         )
         llm.lazy_init(rngs=rngs, method="init", use_adarms=[False, True] if config.pi05 else [False, False])
+        # SigLIP 把每张 224x224 图像编码成 patch tokens，再投影到 PaliGemma 的宽度。
         img = nnx_bridge.ToNNX(
             _siglip.Module(
                 num_classes=paligemma_config.width,
@@ -91,6 +96,8 @@ class Pi0(_model.BaseModel):
         self.PaliGemma = nnx.Dict(llm=llm, img=img)
         self.action_in_proj = nnx.Linear(config.action_dim, action_expert_config.width, rngs=rngs)
         if config.pi05:
+            # pi0.5 不把 time embedding 拼到每个 action token 上；这两个 MLP
+            # 生成 adaptive RMSNorm 的条件向量，在 action expert 的每层中注入时间信息。
             self.time_mlp_in = nnx.Linear(action_expert_config.width, action_expert_config.width, rngs=rngs)
             self.time_mlp_out = nnx.Linear(action_expert_config.width, action_expert_config.width, rngs=rngs)
         else:
@@ -109,6 +116,8 @@ class Pi0(_model.BaseModel):
         input_mask = []
         ar_mask = []
         tokens = []
+        # Prefix = 多路图像 token + 语言 token。pi0.5 的离散 state 也已经被
+        # tokenizer 写进语言 token，因此这里不会单独看到 state token。
         # embed images
         for name in obs.images:
             image_tokens, _ = self.PaliGemma.img(obs.images[name], train=False)
@@ -156,11 +165,13 @@ class Pi0(_model.BaseModel):
             # image/language inputs do not attend to state or actions
             ar_mask += [True]
 
+        # Suffix 是整个带噪动作块，而不是一次只预测一个动作。
+        # 默认形状为 [batch, 50, 32]，50 个 token 会并行经过 action expert。
         action_tokens = self.action_in_proj(noisy_actions)
         # embed timestep using sine-cosine positional encoding with sensitivity in the range [0, 1]
         time_emb = posemb_sincos(timestep, self.action_in_proj.out_features, min_period=4e-3, max_period=4.0)
         if self.pi05:
-            # time MLP (for adaRMS)
+            # pi0.5：time MLP 只产生 adaRMS 条件；动作 token 保持为线性投影结果。
             time_emb = self.time_mlp_in(time_emb)
             time_emb = nnx.swish(time_emb)
             time_emb = self.time_mlp_out(time_emb)
@@ -178,7 +189,9 @@ class Pi0(_model.BaseModel):
             adarms_cond = None
         tokens.append(action_expert_tokens)
         input_mask.append(jnp.ones(action_expert_tokens.shape[:2], dtype=jnp.bool_))
-        # image/language/state inputs do not attend to action tokens
+        # 第一个动作 token 开启一个新 block，后续 49 个动作 token 与它同属该 block。
+        # 因而：动作块能看到全部 prefix，prefix 看不到动作块，动作 token 之间双向可见。
+        # 这说明 50 步动作是并行去噪的，并不是自回归地逐步生成。
         ar_mask += [True] + ([False] * (self.action_horizon - 1))
         tokens = jnp.concatenate(tokens, axis=1)
         input_mask = jnp.concatenate(input_mask, axis=1)
@@ -196,6 +209,8 @@ class Pi0(_model.BaseModel):
         noise = jax.random.normal(noise_rng, actions.shape)
         time = jax.random.beta(time_rng, 1.5, 1, batch_shape) * 0.999 + 0.001
         time_expanded = time[..., None, None]
+        # Flow matching 的直线路径：t=0 是数据动作，t=1 是高斯噪声。
+        # 模型学习沿这条路径的恒定目标速度 u_t = noise - actions。
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
@@ -211,6 +226,8 @@ class Pi0(_model.BaseModel):
         )
         v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
+        # 先在动作维度上取均值，保留 batch 和 50 个时间位置；外层 train_step
+        # 再对所有剩余维度求均值，得到用于反向传播的标量 loss。
         return jnp.mean(jnp.square(v_t - u_t), axis=-1)
 
     @override
@@ -230,7 +247,7 @@ class Pi0(_model.BaseModel):
         if noise is None:
             noise = jax.random.normal(rng, (batch_size, self.action_horizon, self.action_dim))
 
-        # first fill KV cache with a forward pass of the prefix
+        # Prefix 在所有去噪步中不变，因此只前向一次并缓存 K/V；随后每一步只重算 suffix。
         prefix_tokens, prefix_mask, prefix_ar_mask = self.embed_prefix(observation)
         prefix_attn_mask = make_attn_mask(prefix_mask, prefix_ar_mask)
         positions = jnp.cumsum(prefix_mask, axis=1) - 1
@@ -268,6 +285,8 @@ class Pi0(_model.BaseModel):
             assert prefix_out is None
             v_t = self.action_out_proj(suffix_out[:, -self.action_horizon :])
 
+            # 从 t=1 的噪声出发，用显式 Euler 法沿预测速度积分到 t=0。
+            # num_steps=10 时 dt=-0.1，最终一次性得到完整的 50 步动作块。
             return x_t + dt * v_t, time + dt
 
         def cond(carry):

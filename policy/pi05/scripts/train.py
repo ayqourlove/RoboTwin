@@ -161,6 +161,7 @@ def train_step(
     state: training_utils.TrainState,
     batch: tuple[_model.Observation, _model.Actions],
 ) -> tuple[training_utils.TrainState, dict[str, at.Array]]:
+    # TrainState 分开保存无参数的模型结构和参数树；每个 step 先合并回可调用模型。
     model = nnx.merge(state.model_def, state.params)
     model.train()
 
@@ -177,7 +178,8 @@ def train_step(
     train_rng = jax.random.fold_in(rng, state.step)
     observation, actions = batch
 
-    # Filter out frozen params.
+    # 只对 trainable_filter 命中的参数求梯度。LoRA 配置下，被冻结的 Gemma
+    # 主干不会进入梯度树，但 LoRA、视觉编码器和动作头等参数仍可更新。
     diff_state = nnx.DiffState(0, config.trainable_filter)
     loss, grads = nnx.value_and_grad(loss_fn, argnums=diff_state)(model, train_rng, observation, actions)
 
@@ -191,6 +193,7 @@ def train_step(
 
     new_state = dataclasses.replace(state, step=state.step + 1, params=new_params, opt_state=new_opt_state)
     if state.ema_decay is not None:
+        # EMA 参数不参与梯度更新，只保存训练参数的平滑版本；checkpoint 推理默认使用它。
         new_state = dataclasses.replace(
             new_state,
             ema_params=jax.tree.map(
@@ -258,6 +261,8 @@ def main(config: _config.TrainConfig):
     if resuming:
         train_state = _checkpoints.restore_state(checkpoint_manager, train_state, data_loader)
 
+    # JIT 会在首次遇到这组形状时编译完整训练步。双卡配置中，data batch 和
+    # TrainState 按各自的 sharding 规则放到 FSDP mesh 上。
     ptrain_step = jax.jit(
         functools.partial(train_step, config),
         in_shardings=(replicated_sharding, train_state_sharding, data_sharding),

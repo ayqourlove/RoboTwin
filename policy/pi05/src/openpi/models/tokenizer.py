@@ -23,6 +23,10 @@ class PaligemmaTokenizer:
         cleaned_text = prompt.strip().replace("_", " ").replace("\n", " ")
         if state is not None:
             # This is the Pi05 format, where the state is part of the discrete language input.
+            # state 在进入这里之前已经归一化。每一维按 [-1, 1] 划分为 256 桶，
+            # 桶编号以普通十进制文本写入 prompt，再由 SentencePiece 继续分词。
+            # quantile normalization 不会主动 clip：低于 -1 的离群值会得到 -1，
+            # 高于上边界的值会得到 255；这里也不会保留连续 state token。
             discretized_state = np.digitize(state, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
             state_str = " ".join(map(str, discretized_state))
             full_prompt = f"Task: {cleaned_text}, State: {state_str};\nAction: "
@@ -33,6 +37,7 @@ class PaligemmaTokenizer:
             tokens = self._tokenizer.encode(cleaned_text, add_bos=True) + self._tokenizer.encode("\n")
         tokens_len = len(tokens)
         if tokens_len < self._max_len:
+            # token id 0 同时被用作 padding 值；真正是否有效由 mask 决定。
             padding = [False] * (self._max_len - tokens_len)
             mask = [True] * tokens_len + padding
             tokens = tokens + padding
