@@ -11,6 +11,9 @@ eval_video/
 task_config/
 **/.DS_Store
 
+policy/pi05/lerobodata
+policy/pi05/training_data
+policy/pi05/processed_data
 # eval result
 eval_result/
 

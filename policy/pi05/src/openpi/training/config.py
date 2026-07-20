@@ -610,6 +610,54 @@ _CONFIGS = [
         num_train_steps=30000,
         fsdp_devices=1,
     ),
+    # pi05 base LoRA for the local adjust_bottle_singlearm dataset.
+    # Two 24 GB GPUs are used as one FSDP group, matching RoboTwin's
+    # recommended setup for pi05 LoRA fine-tuning with batch_size=32.
+    TrainConfig(
+        name="pi05_base_adjust_bottle_singlearm_lora",
+        model=pi0_config.Pi0Config(
+            pi05=True,
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ),
+        data=LeRobotAlohaDataConfig(
+            repo_id="adjust_bottle_singlearm",
+            adapt_to_pi=False,
+            repack_transforms=_transforms.Group(
+                inputs=[
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "cam_high": "observation.images.cam_high",
+                                "cam_left_wrist": "observation.images.cam_left_wrist",
+                                "cam_right_wrist": "observation.images.cam_right_wrist",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            "prompt": "prompt",
+                        }
+                    )
+                ]
+            ),
+            base_config=DataConfig(
+                prompt_from_task=True,
+            ),
+        ),
+        freeze_filter=pi0_config.Pi0Config(
+            paligemma_variant="gemma_2b_lora",
+            action_expert_variant="gemma_300m_lora",
+        ).get_freeze_filter(),
+        batch_size=32,
+        weight_loader=weight_loaders.CheckpointWeightLoader(
+            "s3://openpi-assets/checkpoints/pi05_base/params"
+        ),
+        num_train_steps=30_000,
+        save_interval=2000,
+        fsdp_devices=2,
+        # Keep local training self-contained. Pass --wandb-enabled to the
+        # training command if experiment tracking has already been configured.
+        wandb_enabled=False,
+    ),
     # pi0_base by lora
     TrainConfig(
         name="pi0_base_aloha_robotwin_lora",
