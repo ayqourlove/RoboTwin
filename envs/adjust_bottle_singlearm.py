@@ -6,11 +6,18 @@ class adjust_bottle_singlearm(Base_Task):
 
     def setup_demo(self, **kwags):
         super()._init_task_env_(**kwags)
+        self.info["info"] = {
+            "{A}": f"001_bottle/base{self.model_id}",
+            "{a}": str(ArmTag("right")),
+        }
 
     def load_actors(self):
         # right_qpose = [0.707, 0.0, 0.0, -0.707]
         right_qpose = [1, 0.0, 0.0, 0]
         self.model_id = np.random.choice([13, 16])
+        self.place_ee_pose = [0.2, -0.1, 0.95, 0, 0, 0, 1]
+        # Expected bottle center after executing place_ee_pose with the current grasp offset.
+        self.bottle_target_xy = np.array([0.055, -0.1], dtype=np.float64)
 
         self.bottle = rand_create_actor(
             self,
@@ -67,7 +74,7 @@ class adjust_bottle_singlearm(Base_Task):
         action2_pose = [center_x, center_y, 0.9] + gripper_quat
         action4_pose = [center_x, center_y, 1.1] + gripper_quat
         # action5_pose = [0.2967910942875937, -0.17212361821866634, 0.9469957605991061, 0.33363453956454353, -0.001198375642723288, -0.005011291879351232, 0.9426884134532864]
-        action5_pose = [0.2, -0.1, 0.95, 0, 0, 0, 1]
+        action5_pose = self.place_ee_pose.copy()
         actions = [ 
             Action(arm_tag, "move", target_pose=action1_pose),
             Action(arm_tag, "move", target_pose=action2_pose),
@@ -84,16 +91,45 @@ class adjust_bottle_singlearm(Base_Task):
         self.move(self.action_my(arm_tag))
         self.delay(25)
 
-        self.info["info"] = {
-            "{A}": f"001_bottle/base{self.model_id}",
-            "{a}": str(arm_tag),
-        }
         return self.info
 
     def check_success(self):
-        target_hight = 0.85
-        bottle_pose = self.bottle.get_functional_point(0)
-        return bottle_pose[2] > 0.85
+        bottle_center = np.asarray(self.bottle.get_functional_point(0)[:3], dtype=np.float64)
+
+        orientation_matrix = np.asarray(self.bottle.config.get("orientation_point"), dtype=np.float64)
+        if orientation_matrix.shape == (1, 4, 4):
+            orientation_matrix = orientation_matrix[0]
+        if orientation_matrix.shape != (4, 4):
+            return False
+
+        orientation_matrix = orientation_matrix.copy()
+        orientation_matrix[:3, 3] *= np.asarray(self.bottle.config["scale"], dtype=np.float64)
+        bottle_world_matrix = self.bottle.get_pose().to_transformation_matrix()
+        bottle_mouth = (bottle_world_matrix @ orientation_matrix)[:3, 3]
+        bottle_axis = bottle_mouth - bottle_center
+        bottle_half_height = np.linalg.norm(bottle_axis)
+        if bottle_half_height < 1e-8:
+            return False
+        bottle_axis /= bottle_half_height
+
+        linear_velocity = None
+        angular_velocity = None
+        for component in self.bottle.actor.get_components():
+            if hasattr(component, "get_linear_velocity"):
+                linear_velocity = np.asarray(component.get_linear_velocity(), dtype=np.float64)
+                angular_velocity = np.asarray(component.get_angular_velocity(), dtype=np.float64)
+                break
+        if linear_velocity is None or angular_velocity is None:
+            return False
+
+        target_table_height = 0.74 + self.table_z_bias + bottle_half_height
+        position_ok = np.linalg.norm(bottle_center[:2] - self.bottle_target_xy) < 0.05
+        on_table = abs(bottle_center[2] - target_table_height) < 0.035
+        upright = np.dot(bottle_axis, np.array([0.0, 0.0, 1.0])) > np.cos(np.deg2rad(20.0))
+        stable = np.linalg.norm(linear_velocity) < 0.02 and np.linalg.norm(angular_velocity) < 0.2
+        released = self.is_right_gripper_open()
+
+        return bool(position_ok and on_table and upright and stable and released)
 
 
 # pre grasp pose: [0.09080805629491806, -0.1895170956850052, 0.9944212436676025, 0.1659744679927826, 0.6676888465881348, 0.23081311583518982, -0.6880184412002563]

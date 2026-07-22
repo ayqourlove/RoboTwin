@@ -148,6 +148,7 @@ def main(usr_args):
     print("\033[94mWrist Camera Config:\033[0m " + str(args["camera"]["wrist_camera_type"]) + f", " +
           str(args["camera"]["collect_wrist_camera"]))
     print("\033[94mEmbodiment Config:\033[0m " + embodiment_name)
+    print("\033[94mExpert Seed Filter:\033[0m " + str(args.get("use_expert_seed_filter", True)))
     print("\n==================================")
 
     TASK_ENV = class_decorator(args["task_name"])
@@ -197,7 +198,7 @@ def eval_policy(task_name,
     print(f"\033[34mTask Name: {args['task_name']}\033[0m")
     print(f"\033[34mPolicy Name: {args['policy_name']}\033[0m")
 
-    expert_check = True
+    expert_check = args.get("use_expert_seed_filter", True)
     TASK_ENV.suc = 0
     TASK_ENV.test_num = 0
 
@@ -233,27 +234,37 @@ def eval_policy(task_name,
                 args["render_freq"] = render_freq
                 continue
             except Exception as e:
-                # stack_trace = traceback.format_exc()
-                # print(" -------------")
-                # print("Error: ", e)
-                # print(" -------------")
                 TASK_ENV.close_env()
+                print(f"Expert check failed at seed {now_seed}: {type(e).__name__}: {e}")
+                traceback.print_exc()
                 now_seed += 1
                 args["render_freq"] = render_freq
-                print("error occurs !")
                 continue
 
-        if (not expert_check) or (TASK_ENV.plan_success and TASK_ENV.check_success()):
-            succ_seed += 1
-            suc_test_seed_list.append(now_seed)
-        else:
-            now_seed += 1
-            args["render_freq"] = render_freq
-            continue
+        if expert_check:
+            if TASK_ENV.plan_success and TASK_ENV.check_success():
+                succ_seed += 1
+                suc_test_seed_list.append(now_seed)
+            else:
+                now_seed += 1
+                args["render_freq"] = render_freq
+                continue
 
         args["render_freq"] = render_freq
 
-        TASK_ENV.setup_demo(now_ep_num=now_id, seed=now_seed, is_test=True, **args)
+        if not expert_check:
+            try:
+                TASK_ENV.setup_demo(now_ep_num=now_id, seed=now_seed, is_test=True, **args)
+            except UnStableError as e:
+                print(f"Skipping unstable evaluation seed {now_seed}: {e}")
+                TASK_ENV.close_env()
+                now_seed += 1
+                continue
+            succ_seed += 1
+            suc_test_seed_list.append(now_seed)
+            episode_info = TASK_ENV.info
+        else:
+            TASK_ENV.setup_demo(now_ep_num=now_id, seed=now_seed, is_test=True, **args)
         episode_info_list = [episode_info["info"]]
         results = generate_episode_descriptions(args["task_name"], episode_info_list, test_num)
         instruction = np.random.choice(results[0][instruction_type])

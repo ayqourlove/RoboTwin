@@ -34,3 +34,4 @@ save_path: ./data
 clear_cache_freq: 1
 collect_data: true
 eval_video_log: true
+use_expert_seed_filter: true
