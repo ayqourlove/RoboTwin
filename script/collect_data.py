@@ -53,13 +53,21 @@ def _json_safe(value):
     return str(value)
 
 
-def append_failure_record(args, seed, failure_type, message, details=None, episode_index=None):
+def append_failure_record(
+    args,
+    seed,
+    failure_type,
+    message,
+    details=None,
+    episode_index=None,
+    phase="seed_collection",
+):
     try:
         record = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "task_name": args["task_name"],
             "task_config": args["task_config"],
-            "phase": "seed_collection",
+            "phase": phase,
             "seed": int(seed),
             "episode_index": episode_index,
             "failure_type": failure_type,
@@ -144,6 +152,12 @@ def main(task_name=None, task_config=None):
 
 def run(TASK_ENV: Base_Task, args):
     epid, suc_num, fail_num, seed_list = 0, 0, 0, []
+    collection_seed_reserve = (
+        max(0, int(args.get("collection_seed_reserve", 0)))
+        if args.get("collect_data", False)
+        else 0
+    )
+    seed_target_num = args["episode_num"] + collection_seed_reserve
 
     print(f"Task Name: \033[34m{args['task_name']}\033[0m")
 
@@ -163,7 +177,13 @@ def run(TASK_ENV: Base_Task, args):
                     epid = max(seed_list) + 1
             print(f"Exist seed file, Start from: {epid} / {suc_num}")
 
-        while suc_num < args["episode_num"]:
+        if collection_seed_reserve:
+            print(
+                f"Collecting {collection_seed_reserve} extra seed(s) "
+                "for failed trajectory replays."
+            )
+
+        while suc_num < seed_target_num:
             try:
                 TASK_ENV.setup_demo(now_ep_num=suc_num, seed=epid, **args)
                 TASK_ENV.play_once()
@@ -268,12 +288,38 @@ def run(TASK_ENV: Base_Task, args):
         while exist_hdf5(st_idx):
             st_idx += 1
 
-        for episode_idx in range(st_idx, args["episode_num"]):
+        manifest_path = os.path.join(args["save_path"], "collection_manifest.json")
+        if os.path.exists(manifest_path):
+            with open(manifest_path, "r", encoding="utf-8") as file:
+                collection_manifest = json.load(file)
+        else:
+            collection_manifest = {}
+
+        mapped_candidate_indices = [
+            int(item["trajectory_index"])
+            for item in collection_manifest.values()
+            if isinstance(item, dict) and "trajectory_index" in item
+        ]
+        candidate_idx = (
+            max(mapped_candidate_indices) + 1
+            if mapped_candidate_indices
+            else st_idx
+        )
+        episode_idx = st_idx
+
+        while episode_idx < args["episode_num"]:
+            if candidate_idx >= len(seed_list):
+                raise RuntimeError(
+                    "Not enough replayable seed trajectories to finish data collection. "
+                    "Increase 'collection_seed_reserve' in the task config and rerun."
+                )
+
+            seed = seed_list[candidate_idx]
             print(f"\033[34mTask name: {args['task_name']}\033[0m")
 
-            TASK_ENV.setup_demo(now_ep_num=episode_idx, seed=seed_list[episode_idx], **args)
+            TASK_ENV.setup_demo(now_ep_num=episode_idx, seed=seed, **args)
 
-            traj_data = TASK_ENV.load_tran_data(episode_idx)
+            traj_data = TASK_ENV.load_tran_data(candidate_idx)
             args["left_joint_path"] = traj_data["left_joint_path"]
             args["right_joint_path"] = traj_data["right_joint_path"]
             TASK_ENV.set_path_lst(args)
@@ -288,6 +334,36 @@ def run(TASK_ENV: Base_Task, args):
                 info_db = json.load(file)
 
             info = TASK_ENV.play_once()
+            collection_success = TASK_ENV.plan_success and TASK_ENV.check_success()
+
+            if not collection_success:
+                success_check = getattr(TASK_ENV, "last_success_check", None)
+                print(" -------------")
+                print(
+                    f"collect data episode {episode_idx} fail! "
+                    f"(seed = {seed}, trajectory = {candidate_idx})"
+                )
+                print("Success check: ", success_check)
+                print("Skip this trajectory and try the next saved seed.")
+                print(" -------------")
+                append_failure_record(
+                    args,
+                    seed,
+                    "collection_replay_failed",
+                    "Saved trajectory replay did not satisfy the task success check",
+                    details={
+                        "trajectory_index": candidate_idx,
+                        "success_check": success_check,
+                        "last_failure_info": getattr(TASK_ENV, "last_failure_info", None),
+                    },
+                    episode_index=episode_idx,
+                    phase="data_collection",
+                )
+                TASK_ENV.close_env()
+                TASK_ENV.remove_data_cache()
+                candidate_idx += 1
+                continue
+
             info_db[f"episode_{episode_idx}"] = info
 
             with open(info_file_path, "w", encoding="utf-8") as file:
@@ -296,7 +372,16 @@ def run(TASK_ENV: Base_Task, args):
             TASK_ENV.close_env(clear_cache=((episode_idx + 1) % clear_cache_freq == 0))
             TASK_ENV.merge_pkl_to_hdf5_video()
             TASK_ENV.remove_data_cache()
-            assert TASK_ENV.check_success(), "Collect Error"
+
+            collection_manifest[f"episode_{episode_idx}"] = {
+                "seed": int(seed),
+                "trajectory_index": int(candidate_idx),
+            }
+            with open(manifest_path, "w", encoding="utf-8") as file:
+                json.dump(collection_manifest, file, ensure_ascii=False, indent=4)
+
+            episode_idx += 1
+            candidate_idx += 1
 
         command = f"cd description && bash gen_episode_instructions.sh {args['task_name']} {args['task_config']} {args['language_num']}"
         os.system(command)

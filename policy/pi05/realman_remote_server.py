@@ -14,7 +14,7 @@ from openpi.training import config as training_config
 
 PI05_DIR = Path(__file__).resolve().parent
 DEFAULT_CHECKPOINT = (
-    PI05_DIR / "checkpoints" / "pi05_base_adjust_bottle_singlearm_lora" / "adjust_bottle_singlearm_lora" / "10000"
+    PI05_DIR / "checkpoints" / "pi05_base_adjust_bottle_singlearm_lora" / "demo_random" / "12000"
 )
 DEFAULT_PROMPT = "Pick up the bottle and place it upright at the target position."
 CAMERA_KEYS = ("middle", "left", "right")

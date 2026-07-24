@@ -100,6 +100,11 @@ class adjust_bottle_singlearm(Base_Task):
         if orientation_matrix.shape == (1, 4, 4):
             orientation_matrix = orientation_matrix[0]
         if orientation_matrix.shape != (4, 4):
+            self.last_success_check = {
+                "success": False,
+                "reason": "invalid_orientation_point",
+                "orientation_point_shape": list(orientation_matrix.shape),
+            }
             return False
 
         orientation_matrix = orientation_matrix.copy()
@@ -109,6 +114,12 @@ class adjust_bottle_singlearm(Base_Task):
         bottle_axis = bottle_mouth - bottle_center
         bottle_half_height = np.linalg.norm(bottle_axis)
         if bottle_half_height < 1e-8:
+            self.last_success_check = {
+                "success": False,
+                "reason": "invalid_bottle_axis",
+                "bottle_center": bottle_center.tolist(),
+                "bottle_mouth": bottle_mouth.tolist(),
+            }
             return False
         bottle_axis /= bottle_half_height
 
@@ -120,16 +131,46 @@ class adjust_bottle_singlearm(Base_Task):
                 angular_velocity = np.asarray(component.get_angular_velocity(), dtype=np.float64)
                 break
         if linear_velocity is None or angular_velocity is None:
+            self.last_success_check = {
+                "success": False,
+                "reason": "velocity_component_not_found",
+            }
             return False
 
         target_table_height = 0.74 + self.table_z_bias + bottle_half_height
-        position_ok = np.linalg.norm(bottle_center[:2] - self.bottle_target_xy) < 0.05
-        on_table = abs(bottle_center[2] - target_table_height) < 0.035
-        upright = np.dot(bottle_axis, np.array([0.0, 0.0, 1.0])) > np.cos(np.deg2rad(20.0))
-        stable = np.linalg.norm(linear_velocity) < 0.02 and np.linalg.norm(angular_velocity) < 0.2
+        xy_error = np.linalg.norm(bottle_center[:2] - self.bottle_target_xy)
+        table_height_error = abs(bottle_center[2] - target_table_height)
+        upright_cosine = np.dot(bottle_axis, np.array([0.0, 0.0, 1.0]))
+        linear_speed = np.linalg.norm(linear_velocity)
+        angular_speed = np.linalg.norm(angular_velocity)
+
+        position_ok = xy_error < 0.05
+        on_table = table_height_error < 0.035
+        upright = upright_cosine > np.cos(np.deg2rad(20.0))
+        stable = linear_speed < 0.02 and angular_speed < 0.2
         released = self.is_right_gripper_open()
 
-        return bool(position_ok and on_table and upright and stable and released)
+        success = bool(position_ok and on_table and upright and stable and released)
+        self.last_success_check = {
+            "success": success,
+            "position_ok": bool(position_ok),
+            "on_table": bool(on_table),
+            "upright": bool(upright),
+            "stable": bool(stable),
+            "released": bool(released),
+            "bottle_center": bottle_center.tolist(),
+            "target_xy": self.bottle_target_xy.tolist(),
+            "xy_error": float(xy_error),
+            "target_center_z": float(target_table_height),
+            "table_height_error": float(table_height_error),
+            "bottle_axis": bottle_axis.tolist(),
+            "upright_cosine": float(upright_cosine),
+            "linear_velocity": linear_velocity.tolist(),
+            "linear_speed": float(linear_speed),
+            "angular_velocity": angular_velocity.tolist(),
+            "angular_speed": float(angular_speed),
+        }
+        return success
 
 
 # pre grasp pose: [0.09080805629491806, -0.1895170956850052, 0.9944212436676025, 0.1659744679927826, 0.6676888465881348, 0.23081311583518982, -0.6880184412002563]
